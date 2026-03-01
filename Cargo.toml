@@ -1,0 +1,13 @@
+[package]
+name = "spectralblend"
+version = "0.1.0"
+edition = "2021"
+description = "Real-time spectral voice masking audio processor"
+
+[dependencies]
+realfft = "3.5"
+rustfft = "6"
+hound = "3.5"
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "1.0"
