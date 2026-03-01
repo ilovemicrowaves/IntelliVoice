@@ -33,11 +33,29 @@ impl VoiceGate {
         }
     }
 
-    /// Update gate state from voice spectrum. Returns smoothed envelope (0.0..1.0).
+    /// Update gate state from a single voice spectrum. Returns smoothed envelope (0.0..1.0).
+    #[allow(dead_code)]
     pub fn update(&mut self, voice_spectrum: &[Complex<f32>]) -> f32 {
         let rms = spectrum_rms(voice_spectrum);
         let db = 20.0 * (rms + 1e-10).log10();
+        self.update_from_db(db)
+    }
 
+    /// Update gate state from stereo voice spectra. Uses the louder channel's RMS
+    /// so both sides gate together, avoiding disorienting one-sided masking.
+    pub fn update_stereo(
+        &mut self,
+        voice_spectrum_l: &[Complex<f32>],
+        voice_spectrum_r: &[Complex<f32>],
+    ) -> f32 {
+        let rms_l = spectrum_rms(voice_spectrum_l);
+        let rms_r = spectrum_rms(voice_spectrum_r);
+        let rms = rms_l.max(rms_r);
+        let db = 20.0 * (rms + 1e-10).log10();
+        self.update_from_db(db)
+    }
+
+    fn update_from_db(&mut self, db: f32) -> f32 {
         // Hysteresis gate
         if self.gate_open {
             if db < self.threshold_off_db {
