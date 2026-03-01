@@ -4,9 +4,9 @@ hop_ratio = 0.5
 sample_rate = 48000
 
 [masking]
-depth = 0.6
-sensitivity = 1.5
-max_reduction_db = -6.0
+depth = 0.85
+sensitivity = 2.5
+max_reduction_db = -12.0
 sub_bass_protect_hz = 80.0
 focus_low_hz = 300.0
 focus_high_hz = 6000.0
@@ -15,9 +15,9 @@ spectral_smooth_bins = 3
 [envelope]
 attack_ms = 5.0
 release_ms = 100.0
-gate_threshold_on = -40.0
-gate_threshold_off = -50.0
+gate_threshold_on = -55.0
+gate_threshold_off = -65.0
 
 [output]
-voice_gain_db = 0.0
-music_gain_db = 0.0
+voice_gain_db = 9.0
+music_gain_db = -3.0

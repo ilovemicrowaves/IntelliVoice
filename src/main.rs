@@ -3,7 +3,7 @@ mod dsp;
 
 use clap::{Parser, Subcommand};
 use config::Config;
-use dsp::{OverlapAddProcessor, SpectralMask, VoiceGate, mix_frame, mixer::db_to_gain};
+use dsp::{OverlapAddProcessor, SpectralMask, VoiceCompressor, VoiceGate, mix_frame, mixer::db_to_gain};
 use rustfft::num_complex::Complex;
 use std::path::{Path, PathBuf};
 
@@ -162,6 +162,7 @@ fn process_offline(
         hop_size,
     );
     let mut spectral_mask = SpectralMask::new(fft_size, sample_rate);
+    let mut voice_compressor = VoiceCompressor::new(0.15, 0.002, 1.8, sample_rate, hop_size);
 
     // Output accumulators (overlap-add targets)
     let output_len = total_len + fft_size; // extra padding for overlap-add tail
@@ -179,9 +180,12 @@ fn process_offline(
         let music_frame = &music[pos..pos + fft_size];
         let voice_frame = &voice[pos..pos + fft_size];
 
+        // Compress voice so quiet and loud sections both come through
+        let compressed_voice = voice_compressor.process(voice_frame);
+
         // Forward FFT both
         let music_spectrum = music_fft.process_frame(music_frame).to_vec();
-        let voice_spectrum = voice_fft.process_frame(voice_frame).to_vec();
+        let voice_spectrum = voice_fft.process_frame(&compressed_voice).to_vec();
 
         // Extract magnitudes
         let music_mag: Vec<f32> = music_spectrum.iter().map(|c| c.norm()).collect();

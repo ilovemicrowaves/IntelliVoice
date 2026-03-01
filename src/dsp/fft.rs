@@ -76,24 +76,24 @@ impl OverlapAddProcessor {
             .process_with_scratch(&mut self.spectrum, &mut self.ifft_out, &mut self.scratch_inverse)
             .expect("FFT inverse failed");
 
-        // Normalize by fft_size (realfft convention) and apply synthesis window,
-        // then overlap-add
+        // Normalize by fft_size (realfft convention) and overlap-add.
+        // No synthesis window — Hann analysis window alone satisfies COLA at 50% overlap.
         let norm = 1.0 / self.fft_size as f32;
         for i in 0..self.fft_size {
             let out_idx = position + i;
             if out_idx < output_accum.len() {
-                output_accum[out_idx] += self.ifft_out[i] * norm * self.window[i];
+                output_accum[out_idx] += self.ifft_out[i] * norm;
             }
         }
     }
 }
 
-/// Hann window: w[n] = 0.5 * (1 - cos(2*pi*n / (N-1)))
-/// Satisfies COLA (constant overlap-add) with 50% overlap.
+/// Periodic Hann window: w[n] = 0.5 * (1 - cos(2*pi*n / N))
+/// The periodic form (dividing by N, not N-1) satisfies COLA at 50% overlap.
 fn hann_window(size: usize) -> Vec<f32> {
     (0..size)
         .map(|n| {
-            let phase = 2.0 * std::f32::consts::PI * n as f32 / (size - 1) as f32;
+            let phase = 2.0 * std::f32::consts::PI * n as f32 / size as f32;
             0.5 * (1.0 - phase.cos())
         })
         .collect()
