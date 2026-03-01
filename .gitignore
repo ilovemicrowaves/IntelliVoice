@@ -1,0 +1,6 @@
+/target
+*.wav
+*.flac
+*.ogg
+*.mp3
+.claude/
