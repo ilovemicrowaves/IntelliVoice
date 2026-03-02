@@ -13,8 +13,8 @@ sudo pacman -S --needed rust clang pipewire libxcb wayland libxkbcommon mesa
 Clone the repo and build:
 
 ```sh
-git clone https://github.com/joel/spectralblend.git
-cd spectralblend
+git clone https://github.com/ilovemicrowaves/IntelliVoice.git
+cd IntelliVoice
 cargo build --release --features gui
 ```
 

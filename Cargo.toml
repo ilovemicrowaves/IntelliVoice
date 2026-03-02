@@ -5,7 +5,7 @@ edition = "2021"
 description = "Real-time spectral voice masking audio processor"
 license = "MIT"
 authors = ["Joel"]
-repository = "https://github.com/joel/spectralblend"
+repository = "https://github.com/ilovemicrowaves/IntelliVoice"
 
 [features]
 default = []
