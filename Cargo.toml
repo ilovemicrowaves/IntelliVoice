@@ -3,13 +3,18 @@ name = "spectralblend"
 version = "0.1.0"
 edition = "2021"
 description = "Real-time spectral voice masking audio processor"
+license = "MIT"
+authors = ["Joel"]
+repository = "https://github.com/joel/spectralblend"
 
 [features]
 default = []
 pipewire = ["dep:pipewire"]
+gui = ["pipewire", "dep:eframe"]
 
 [dependencies]
 pipewire = { version = "0.9", optional = true }
+eframe = { version = "0.31", optional = true }
 realfft = "3.5"
 rustfft = "6"
 hound = "3.5"
@@ -19,3 +24,15 @@ toml = "1.0"
 cpal = "0.15"
 rtrb = "0.3"
 libc = "0.2"
+
+[package.metadata.deb]
+section = "sound"
+priority = "optional"
+depends = "libpipewire-0.3-0, libxcb1, libwayland-client0, libxkbcommon0, libgl1"
+features = ["gui"]
+default-features = false
+assets = [
+    ["target/release/spectralblend", "usr/bin/", "755"],
+    ["pkg/spectralblend.desktop", "usr/share/applications/", "644"],
+    ["pkg/spectralblend.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+]

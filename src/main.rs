@@ -1,6 +1,8 @@
 mod audio;
 mod config;
 mod dsp;
+#[cfg(feature = "gui")]
+mod gui;
 #[cfg(feature = "pipewire")]
 mod pipewire_filter;
 mod realtime;
@@ -16,7 +18,7 @@ type WavResult = Result<(Vec<f32>, Vec<f32>, u32), Box<dyn std::error::Error>>;
 #[command(name = "spectralblend", about = "Spectral voice masking audio processor")]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -60,11 +62,37 @@ enum Command {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// Launch the GUI for routing audio apps through SpectralBlend
+    #[cfg(feature = "gui")]
+    Gui {
+        /// Path to config TOML file (uses defaults if omitted)
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
 }
 
 fn main() {
     let cli = Cli::parse();
-    match cli.command {
+
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            #[cfg(feature = "gui")]
+            {
+                Command::Gui { config: None }
+            }
+            #[cfg(not(feature = "gui"))]
+            {
+                // Re-parse with help flag to print usage
+                use clap::CommandFactory;
+                Cli::command().print_help().ok();
+                println!();
+                std::process::exit(0);
+            }
+        }
+    };
+
+    match command {
         Command::Offline {
             music,
             voice,
@@ -156,6 +184,20 @@ fn main() {
             };
             if let Err(e) = pipewire_filter::run_pipewire(&cfg) {
                 eprintln!("PipeWire filter failed: {e}");
+                std::process::exit(1);
+            }
+        }
+        #[cfg(feature = "gui")]
+        Command::Gui { config } => {
+            let cfg = match config {
+                Some(path) => Config::load(&path).unwrap_or_else(|e| {
+                    eprintln!("Failed to load config: {e}");
+                    std::process::exit(1);
+                }),
+                None => Config::default(),
+            };
+            if let Err(e) = gui::run_gui(&cfg) {
+                eprintln!("GUI failed: {e}");
                 std::process::exit(1);
             }
         }
@@ -293,6 +335,7 @@ fn process_offline(
             &mut voice_accum_l,
             &mut voice_accum_r,
             pos,
+            1.0, // full compression
         );
         pos += hop_size;
     }

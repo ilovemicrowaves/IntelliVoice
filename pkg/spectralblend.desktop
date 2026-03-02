@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SpectralBlend
+Comment=Real-time spectral voice masking audio processor
+Exec=spectralblend
+Icon=spectralblend
+Terminal=false
+Categories=Audio;AudioVideo;
+Keywords=audio;voice;music;mixing;spectral;

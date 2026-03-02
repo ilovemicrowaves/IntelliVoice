@@ -1,0 +1,25 @@
+# Maintainer: Joel
+pkgname=spectralblend
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Real-time spectral voice masking audio processor"
+arch=('x86_64')
+url="https://github.com/joel/spectralblend"
+license=('MIT')
+depends=('pipewire' 'libxcb' 'wayland' 'libxkbcommon' 'mesa')
+makedepends=('rust' 'cargo' 'pipewire' 'clang')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo build --release --features gui
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    install -Dm755 "target/release/spectralblend" "$pkgdir/usr/bin/spectralblend"
+    install -Dm644 "pkg/spectralblend.desktop" "$pkgdir/usr/share/applications/spectralblend.desktop"
+    install -Dm644 "pkg/spectralblend.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/spectralblend.svg"
+}

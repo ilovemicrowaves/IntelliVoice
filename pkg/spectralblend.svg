@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#16213e"/>
+    </linearGradient>
+  </defs>
+  <!-- Background rounded square -->
+  <rect width="128" height="128" rx="24" fill="url(#bg)"/>
+  <!-- Music waveform (teal) -->
+  <path d="M20 64 Q32 34, 44 64 Q56 94, 68 64 Q80 34, 92 64 Q104 94, 108 64"
+        stroke="#4ecdc4" stroke-width="6" fill="none" stroke-linecap="round" opacity="0.9"/>
+  <!-- Voice waveform (coral) -->
+  <path d="M20 64 Q38 48, 48 64 Q58 80, 64 64 Q70 48, 80 64 Q90 80, 108 64"
+        stroke="#ff6b6b" stroke-width="6" fill="none" stroke-linecap="round" opacity="0.9"/>
+  <!-- Center blend dot -->
+  <circle cx="64" cy="64" r="6" fill="#f8f8f2" opacity="0.8"/>
+</svg>
