@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "Real-time spectral voice masking audio processor"
 
+[features]
+default = []
+pipewire = ["dep:pipewire"]
+
 [dependencies]
+pipewire = { version = "0.9", optional = true }
 realfft = "3.5"
 rustfft = "6"
 hound = "3.5"

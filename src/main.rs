@@ -1,6 +1,8 @@
 mod audio;
 mod config;
 mod dsp;
+#[cfg(feature = "pipewire")]
+mod pipewire_filter;
 mod realtime;
 
 use clap::{Parser, Subcommand};
@@ -47,6 +49,13 @@ enum Command {
         /// Output device name (substring match, defaults to system default)
         #[arg(long)]
         output: Option<String>,
+        /// Path to config TOML file (uses defaults if omitted)
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// Run as a PipeWire filter node (route apps via pw-link)
+    #[cfg(feature = "pipewire")]
+    Pipewire {
         /// Path to config TOML file (uses defaults if omitted)
         #[arg(long)]
         config: Option<PathBuf>,
@@ -133,6 +142,20 @@ fn main() {
             if let Err(e) = realtime::run_realtime(music_device, voice_device, output_device, &cfg)
             {
                 eprintln!("Real-time processing failed: {e}");
+                std::process::exit(1);
+            }
+        }
+        #[cfg(feature = "pipewire")]
+        Command::Pipewire { config } => {
+            let cfg = match config {
+                Some(path) => Config::load(&path).unwrap_or_else(|e| {
+                    eprintln!("Failed to load config: {e}");
+                    std::process::exit(1);
+                }),
+                None => Config::default(),
+            };
+            if let Err(e) = pipewire_filter::run_pipewire(&cfg) {
+                eprintln!("PipeWire filter failed: {e}");
                 std::process::exit(1);
             }
         }
