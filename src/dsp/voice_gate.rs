@@ -3,10 +3,12 @@ use rustfft::num_complex::Complex;
 pub struct VoiceGate {
     gate_open: bool,
     envelope: f32,
-    threshold_on_db: f32,
-    threshold_off_db: f32,
     alpha_attack: f32,
     alpha_release: f32,
+    // Adaptive noise floor
+    noise_floor_db: f32,
+    margin_db: f32,      // Voice must be this far above noise floor to open
+    hysteresis_db: f32,   // Gate closes this many dB below the open threshold
 }
 
 impl VoiceGate {
@@ -18,18 +20,21 @@ impl VoiceGate {
         sample_rate: u32,
         hop_size: usize,
     ) -> Self {
-        // Alpha from time constant: alpha = exp(-1 / (time_ms * sample_rate / (1000 * hop_size)))
         let hop_rate = sample_rate as f32 / hop_size as f32;
         let alpha_attack = (-1.0 / (attack_ms * 0.001 * hop_rate)).exp();
         let alpha_release = (-1.0 / (release_ms * 0.001 * hop_rate)).exp();
 
+        // Derive margin from the config threshold gap (default: -40 - (-50) = 10 dB)
+        let margin_db = (threshold_on_db - threshold_off_db).max(4.0);
+
         Self {
             gate_open: false,
             envelope: 0.0,
-            threshold_on_db,
-            threshold_off_db,
             alpha_attack,
             alpha_release,
+            noise_floor_db: -80.0,
+            margin_db,
+            hysteresis_db: margin_db * 0.6,
         }
     }
 
@@ -56,12 +61,28 @@ impl VoiceGate {
     }
 
     fn update_from_db(&mut self, db: f32) -> f32 {
+        // Adaptive noise floor tracking:
+        // - Falls quickly when signal drops (catches new ambient level in ~0.3s)
+        // - Rises very slowly when signal is above (doesn't chase speech, ~10s to adapt)
+        if db < self.noise_floor_db + 3.0 {
+            // Near or below current estimate: fast downward adaptation
+            self.noise_floor_db = 0.85 * self.noise_floor_db + 0.15 * db;
+        } else {
+            // Above noise floor: very slow upward drift
+            self.noise_floor_db = 0.998 * self.noise_floor_db + 0.002 * db;
+        }
+        self.noise_floor_db = self.noise_floor_db.clamp(-80.0, -10.0);
+
+        // Dynamic thresholds relative to the noise floor
+        let threshold_on = self.noise_floor_db + self.margin_db;
+        let threshold_off = self.noise_floor_db + self.margin_db - self.hysteresis_db;
+
         // Hysteresis gate
         if self.gate_open {
-            if db < self.threshold_off_db {
+            if db < threshold_off {
                 self.gate_open = false;
             }
-        } else if db > self.threshold_on_db {
+        } else if db > threshold_on {
             self.gate_open = true;
         }
 

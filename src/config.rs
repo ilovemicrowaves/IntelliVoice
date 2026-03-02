@@ -28,6 +28,7 @@ pub struct MaskingConfig {
     pub focus_low_hz: f32,
     pub focus_high_hz: f32,
     pub spectral_smooth_bins: usize,
+    pub focus_strength: f32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -59,13 +60,14 @@ impl Default for ProcessingConfig {
 impl Default for MaskingConfig {
     fn default() -> Self {
         Self {
-            depth: 0.6,
-            sensitivity: 1.5,
-            max_reduction_db: -6.0,
-            sub_bass_protect_hz: 80.0,
+            depth: 0.9,
+            sensitivity: 2.25,
+            max_reduction_db: -9.0,
+            sub_bass_protect_hz: 150.0,
             focus_low_hz: 300.0,
             focus_high_hz: 6000.0,
             spectral_smooth_bins: 3,
+            focus_strength: 0.0,
         }
     }
 }

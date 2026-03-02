@@ -266,6 +266,7 @@ fn processing_loop(
             &mut voice_accum_l,
             &mut voice_accum_r,
             0,
+            1.0, // full compression
         );
 
         // Read first hop_size samples from accumulators → mix

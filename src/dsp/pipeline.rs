@@ -100,12 +100,47 @@ impl DspPipeline {
         voice_accum_l: &mut [f32],
         voice_accum_r: &mut [f32],
         position: usize,
+        compression_mix: f32,
     ) {
-        // Compress voice L/R independently
+        let fft_size = voice_l.len();
+
+        // Compress voice L, blend raw/compressed, normalize volume
         self.voice_compressor_l.process(voice_l, &mut self.compressed_voice);
+        if compression_mix > 0.0 {
+            for i in 0..fft_size {
+                self.compressed_voice[i] = voice_l[i] + compression_mix * (self.compressed_voice[i] - voice_l[i]);
+            }
+            // RMS-normalize so compression changes dynamics without changing volume
+            let sum_raw: f32 = voice_l.iter().map(|&s| s * s).sum();
+            let sum_blend: f32 = self.compressed_voice[..fft_size].iter().map(|&s| s * s).sum();
+            if sum_blend > 1e-10 {
+                let gain = (sum_raw / sum_blend).sqrt();
+                for s in &mut self.compressed_voice[..fft_size] {
+                    *s *= gain;
+                }
+            }
+        } else {
+            self.compressed_voice[..fft_size].copy_from_slice(voice_l);
+        }
         self.voice_spectrum_l.copy_from_slice(self.voice_fft_l.process_frame(&self.compressed_voice));
 
+        // Compress voice R, blend raw/compressed, normalize volume
         self.voice_compressor_r.process(voice_r, &mut self.compressed_voice);
+        if compression_mix > 0.0 {
+            for i in 0..fft_size {
+                self.compressed_voice[i] = voice_r[i] + compression_mix * (self.compressed_voice[i] - voice_r[i]);
+            }
+            let sum_raw: f32 = voice_r.iter().map(|&s| s * s).sum();
+            let sum_blend: f32 = self.compressed_voice[..fft_size].iter().map(|&s| s * s).sum();
+            if sum_blend > 1e-10 {
+                let gain = (sum_raw / sum_blend).sqrt();
+                for s in &mut self.compressed_voice[..fft_size] {
+                    *s *= gain;
+                }
+            }
+        } else {
+            self.compressed_voice[..fft_size].copy_from_slice(voice_r);
+        }
         self.voice_spectrum_r.copy_from_slice(self.voice_fft_r.process_frame(&self.compressed_voice));
 
         // Forward FFT music

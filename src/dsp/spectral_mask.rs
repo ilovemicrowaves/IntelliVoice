@@ -56,18 +56,40 @@ impl SpectralMask {
             output[k] = 1.0 - config.depth * scaled;
         }
 
-        // Step 3: Sub-bass protection
+        // Step 3: Compute average mask within the voice focus band (300-6kHz).
+        // This "broadband mask" represents how much ducking voice is causing
+        // in the frequencies where it actually has energy.
+        let (mut focus_sum, mut focus_count) = (0.0f32, 0u32);
+        for k in 0..self.spectrum_len {
+            let freq = self.bin_freq(k);
+            if freq >= config.focus_low_hz && freq <= config.focus_high_hz {
+                focus_sum += output[k];
+                focus_count += 1;
+            }
+        }
+        let broadband_mask = if focus_count > 0 {
+            focus_sum / focus_count as f32
+        } else {
+            1.0
+        };
+
+        // Step 4: Focus taper + wideband blend.
+        // focus_strength=0.0 → focused: per-bin masking only in voice band, tapers outside
+        // focus_strength=1.0 → broadband: uniform ducking everywhere (like sidechain compression)
+        for (k, m) in output[..self.spectrum_len].iter_mut().enumerate() {
+            let freq = self.bin_freq(k);
+            let weight = focus_weight(freq, config.focus_low_hz, config.focus_high_hz);
+            // Focused mask: per-bin value, tapered outside voice band
+            let focused = lerp(1.0, *m, weight);
+            // Blend between focused (surgical) and broadband (uniform ducking)
+            *m = lerp(focused, broadband_mask, config.focus_strength);
+        }
+
+        // Step 4b: Sub-bass protection (always, regardless of wideband)
         for (k, m) in output[..self.spectrum_len].iter_mut().enumerate() {
             if self.bin_freq(k) < config.sub_bass_protect_hz {
                 *m = 1.0;
             }
-        }
-
-        // Step 4: Frequency focus taper — outside focus range, interpolate toward 1.0
-        for (k, m) in output[..self.spectrum_len].iter_mut().enumerate() {
-            let freq = self.bin_freq(k);
-            let weight = focus_weight(freq, config.focus_low_hz, config.focus_high_hz);
-            *m = lerp(1.0, *m, weight);
         }
 
         // Step 5: Spectral smoothing (moving average across bins) — use work_buffer
