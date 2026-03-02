@@ -2,6 +2,7 @@ use crate::config::MaskingConfig;
 
 pub struct SpectralMask {
     smoothed_mask: Vec<f32>,
+    work_buffer: Vec<f32>,
     spectrum_len: usize,
     fft_size: usize,
     sample_rate: u32,
@@ -14,6 +15,7 @@ impl SpectralMask {
         let spectrum_len = fft_size / 2 + 1;
         Self {
             smoothed_mask: vec![1.0; spectrum_len],
+            work_buffer: vec![0.0; spectrum_len],
             spectrum_len,
             fft_size,
             sample_rate,
@@ -30,7 +32,7 @@ impl SpectralMask {
 
     /// Build the spectral mask from voice and music magnitudes.
     ///
-    /// Returns a Vec<f32> of length spectrum_len where each value is in [floor, 1.0].
+    /// Writes into `output` a slice of length spectrum_len where each value is in [floor, 1.0].
     /// 1.0 = music untouched, floor = maximum reduction.
     pub fn build_mask(
         &mut self,
@@ -38,53 +40,54 @@ impl SpectralMask {
         music_mag: &[f32],
         gate_value: f32,
         config: &MaskingConfig,
-    ) -> Vec<f32> {
+        output: &mut [f32],
+    ) {
         debug_assert_eq!(voice_mag.len(), self.spectrum_len);
         debug_assert_eq!(music_mag.len(), self.spectrum_len);
+        debug_assert!(output.len() >= self.spectrum_len);
 
         let floor = db_to_linear(config.max_reduction_db);
         let max_reduction = 1.0 - floor;
 
         // Step 1-2: Compute raw mask from voice/music ratio
-        let mut mask: Vec<f32> = (0..self.spectrum_len)
-            .map(|k| {
-                let ratio = voice_mag[k] / (music_mag[k] + 1e-10);
-                let scaled = (ratio * config.sensitivity).clamp(0.0, max_reduction);
-                1.0 - config.depth * scaled
-            })
-            .collect();
+        for k in 0..self.spectrum_len {
+            let ratio = voice_mag[k] / (music_mag[k] + 1e-10);
+            let scaled = (ratio * config.sensitivity).clamp(0.0, max_reduction);
+            output[k] = 1.0 - config.depth * scaled;
+        }
 
         // Step 3: Sub-bass protection
-        for (k, m) in mask.iter_mut().enumerate() {
+        for (k, m) in output[..self.spectrum_len].iter_mut().enumerate() {
             if self.bin_freq(k) < config.sub_bass_protect_hz {
                 *m = 1.0;
             }
         }
 
         // Step 4: Frequency focus taper — outside focus range, interpolate toward 1.0
-        for (k, m) in mask.iter_mut().enumerate() {
+        for (k, m) in output[..self.spectrum_len].iter_mut().enumerate() {
             let freq = self.bin_freq(k);
             let weight = focus_weight(freq, config.focus_low_hz, config.focus_high_hz);
             *m = lerp(1.0, *m, weight);
         }
 
-        // Step 5: Spectral smoothing (moving average across bins)
+        // Step 5: Spectral smoothing (moving average across bins) — use work_buffer
         if config.spectral_smooth_bins > 1 {
-            mask = spectral_smooth(&mask, config.spectral_smooth_bins);
+            spectral_smooth_into(&output[..self.spectrum_len], config.spectral_smooth_bins, &mut self.work_buffer);
+            output[..self.spectrum_len].copy_from_slice(&self.work_buffer[..self.spectrum_len]);
         }
 
         // Step 6: Gate modulation — when gate is closed, mask is 1.0 everywhere
-        for v in &mut mask {
+        for v in &mut output[..self.spectrum_len] {
             *v = lerp(1.0, *v, gate_value);
         }
 
         // Step 7: Floor enforcement
-        for v in &mut mask {
+        for v in &mut output[..self.spectrum_len] {
             *v = v.max(floor);
         }
 
         // Step 8: Temporal smoothing (asymmetric)
-        for (sm, &m) in self.smoothed_mask.iter_mut().zip(mask.iter()) {
+        for (sm, &m) in self.smoothed_mask.iter_mut().zip(output[..self.spectrum_len].iter()) {
             let alpha = if m < *sm {
                 self.alpha_attack // mask decreasing = attack
             } else {
@@ -93,7 +96,7 @@ impl SpectralMask {
             *sm = alpha * *sm + (1.0 - alpha) * m;
         }
 
-        self.smoothed_mask.clone()
+        output[..self.spectrum_len].copy_from_slice(&self.smoothed_mask);
     }
 }
 
@@ -132,16 +135,14 @@ fn focus_weight(freq: f32, low_hz: f32, high_hz: f32) -> f32 {
     (edge - freq) / (edge - high_hz)
 }
 
-/// Moving average across bins.
-fn spectral_smooth(mask: &[f32], width: usize) -> Vec<f32> {
+/// Moving average across bins, writing into `output`.
+fn spectral_smooth_into(mask: &[f32], width: usize, output: &mut [f32]) {
     let half = width / 2;
     let len = mask.len();
-    (0..len)
-        .map(|k| {
-            let start = k.saturating_sub(half);
-            let end = (k + half + 1).min(len);
-            let sum: f32 = mask[start..end].iter().sum();
-            sum / (end - start) as f32
-        })
-        .collect()
+    for (k, out) in output.iter_mut().enumerate().take(len) {
+        let start = k.saturating_sub(half);
+        let end = (k + half + 1).min(len);
+        let sum: f32 = mask[start..end].iter().sum();
+        *out = sum / (end - start) as f32;
+    }
 }

@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::path::Path;
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub processing: ProcessingConfig,
@@ -10,7 +10,7 @@ pub struct Config {
     pub output: OutputConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ProcessingConfig {
     pub fft_size: usize,
@@ -18,7 +18,7 @@ pub struct ProcessingConfig {
     pub sample_rate: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct MaskingConfig {
     pub depth: f32,
@@ -30,7 +30,7 @@ pub struct MaskingConfig {
     pub spectral_smooth_bins: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct EnvelopeConfig {
     pub attack_ms: f32,
@@ -39,7 +39,7 @@ pub struct EnvelopeConfig {
     pub gate_threshold_off: f32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct OutputConfig {
     pub voice_gain_db: f32,

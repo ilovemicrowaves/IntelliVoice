@@ -37,7 +37,8 @@ impl VoiceCompressor {
         }
     }
 
-    pub fn process(&mut self, frame: &[f32]) -> Vec<f32> {
+    pub fn process(&mut self, frame: &[f32], output: &mut [f32]) {
+        debug_assert_eq!(frame.len(), output.len());
         let rms = frame_rms(frame);
 
         let target_gain = if rms > self.noise_floor {
@@ -62,7 +63,9 @@ impl VoiceCompressor {
         };
         self.smoothed_gain = alpha * self.smoothed_gain + (1.0 - alpha) * target_gain;
 
-        frame.iter().map(|&s| s * self.smoothed_gain).collect()
+        for (out, &s) in output.iter_mut().zip(frame.iter()) {
+            *out = s * self.smoothed_gain;
+        }
     }
 }
 

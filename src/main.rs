@@ -1,10 +1,11 @@
+mod audio;
 mod config;
 mod dsp;
+mod realtime;
 
 use clap::{Parser, Subcommand};
 use config::Config;
-use dsp::{OverlapAddProcessor, SpectralMask, VoiceCompressor, VoiceGate, mix_frame, mixer::db_to_gain};
-use rustfft::num_complex::Complex;
+use dsp::{DspPipeline, mix_frame, mixer::db_to_gain};
 use std::path::{Path, PathBuf};
 
 type WavResult = Result<(Vec<f32>, Vec<f32>, u32), Box<dyn std::error::Error>>;
@@ -33,6 +34,23 @@ enum Command {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// List available audio input/output devices
+    Devices,
+    /// Process audio in real-time from input devices to output
+    Realtime {
+        /// Music input device name (substring match)
+        #[arg(long)]
+        music: String,
+        /// Voice input device name (substring match)
+        #[arg(long)]
+        voice: String,
+        /// Output device name (substring match, defaults to system default)
+        #[arg(long)]
+        output: Option<String>,
+        /// Path to config TOML file (uses defaults if omitted)
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
 }
 
 fn main() {
@@ -53,6 +71,68 @@ fn main() {
             };
             if let Err(e) = process_offline(&music, &voice, &output, &cfg) {
                 eprintln!("Processing failed: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Devices => {
+            let host = audio::default_host();
+            audio::list_devices(&host);
+        }
+        Command::Realtime {
+            music,
+            voice,
+            output,
+            config,
+        } => {
+            let cfg = match config {
+                Some(path) => Config::load(&path).unwrap_or_else(|e| {
+                    eprintln!("Failed to load config: {e}");
+                    std::process::exit(1);
+                }),
+                None => Config::default(),
+            };
+
+            let host = audio::default_host();
+            let music_device = audio::find_input_device(&host, &music).unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(1);
+            });
+            let voice_device = audio::find_input_device(&host, &voice).unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(1);
+            });
+            let output_device = match output {
+                Some(name) => audio::find_output_device(&host, &name).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }),
+                None => {
+                    use cpal::traits::HostTrait;
+                    host.default_output_device().unwrap_or_else(|| {
+                        eprintln!("No default output device available");
+                        std::process::exit(1);
+                    })
+                }
+            };
+
+            // Validate device configs
+            let sr = cfg.processing.sample_rate;
+            audio::validate_device_config(&music_device, sr, true).unwrap_or_else(|e| {
+                eprintln!("Music device: {e}");
+                std::process::exit(1);
+            });
+            audio::validate_device_config(&voice_device, sr, true).unwrap_or_else(|e| {
+                eprintln!("Voice device: {e}");
+                std::process::exit(1);
+            });
+            audio::validate_device_config(&output_device, sr, false).unwrap_or_else(|e| {
+                eprintln!("Output device: {e}");
+                std::process::exit(1);
+            });
+
+            if let Err(e) = realtime::run_realtime(music_device, voice_device, output_device, &cfg)
+            {
+                eprintln!("Real-time processing failed: {e}");
                 std::process::exit(1);
             }
         }
@@ -166,25 +246,8 @@ fn process_offline(
         total_len as f32 / sample_rate as f32,
     );
 
-    // Per-channel processors (L/R)
-    let mut music_fft_l = OverlapAddProcessor::new(fft_size);
-    let mut music_fft_r = OverlapAddProcessor::new(fft_size);
-    let mut voice_fft_l = OverlapAddProcessor::new(fft_size);
-    let mut voice_fft_r = OverlapAddProcessor::new(fft_size);
-    let mut spectral_mask_l = SpectralMask::new(fft_size, sample_rate);
-    let mut spectral_mask_r = SpectralMask::new(fft_size, sample_rate);
-    let mut voice_compressor_l = VoiceCompressor::new(0.15, 0.002, 1.8, sample_rate, hop_size);
-    let mut voice_compressor_r = VoiceCompressor::new(0.15, 0.002, 1.8, sample_rate, hop_size);
-
-    // Shared voice gate (person is speaking or not — same decision for both channels)
-    let mut voice_gate = VoiceGate::new(
-        config.envelope.gate_threshold_on,
-        config.envelope.gate_threshold_off,
-        config.envelope.attack_ms,
-        config.envelope.release_ms,
-        sample_rate,
-        hop_size,
-    );
+    // Pipeline owns all processors and pre-allocated work buffers
+    let mut pipeline = DspPipeline::new(config);
 
     // Output accumulators (overlap-add targets), one per channel per stream
     let output_len = total_len + fft_size;
@@ -193,68 +256,21 @@ fn process_offline(
     let mut voice_accum_l = vec![0.0f32; output_len];
     let mut voice_accum_r = vec![0.0f32; output_len];
 
-    // Tracking stats
-    let mut frame_count = 0u64;
-    let mut mask_sum = 0.0f64;
-    let mut mask_min = 1.0f32;
-
     // Processing loop
     let mut pos = 0;
     while pos + fft_size <= total_len {
-        let music_frame_l = &music_l[pos..pos + fft_size];
-        let music_frame_r = &music_r[pos..pos + fft_size];
-        let voice_frame_l = &voice_l[pos..pos + fft_size];
-        let voice_frame_r = &voice_r[pos..pos + fft_size];
-
-        // Compress voice L/R independently
-        let compressed_voice_l = voice_compressor_l.process(voice_frame_l);
-        let compressed_voice_r = voice_compressor_r.process(voice_frame_r);
-
-        // Forward FFT all four streams
-        let music_spectrum_l = music_fft_l.process_frame(music_frame_l).to_vec();
-        let music_spectrum_r = music_fft_r.process_frame(music_frame_r).to_vec();
-        let voice_spectrum_l = voice_fft_l.process_frame(&compressed_voice_l).to_vec();
-        let voice_spectrum_r = voice_fft_r.process_frame(&compressed_voice_r).to_vec();
-
-        // Shared voice gate from both channels
-        let gate_value = voice_gate.update_stereo(&voice_spectrum_l, &voice_spectrum_r);
-
-        // Build masks independently per channel (same gate value)
-        let music_mag_l: Vec<f32> = music_spectrum_l.iter().map(|c| c.norm()).collect();
-        let voice_mag_l: Vec<f32> = voice_spectrum_l.iter().map(|c| c.norm()).collect();
-        let mask_l = spectral_mask_l.build_mask(&voice_mag_l, &music_mag_l, gate_value, &config.masking);
-
-        let music_mag_r: Vec<f32> = music_spectrum_r.iter().map(|c| c.norm()).collect();
-        let voice_mag_r: Vec<f32> = voice_spectrum_r.iter().map(|c| c.norm()).collect();
-        let mask_r = spectral_mask_r.build_mask(&voice_mag_r, &music_mag_r, gate_value, &config.masking);
-
-        // Apply masks to music spectra
-        let masked_spectrum_l: Vec<Complex<f32>> = music_spectrum_l
-            .iter()
-            .zip(mask_l.iter())
-            .map(|(bin, &m)| bin * m)
-            .collect();
-        let masked_spectrum_r: Vec<Complex<f32>> = music_spectrum_r
-            .iter()
-            .zip(mask_r.iter())
-            .map(|(bin, &m)| bin * m)
-            .collect();
-
-        // Track stats (average of both channels)
-        let avg_l: f32 = mask_l.iter().sum::<f32>() / mask_l.len() as f32;
-        let avg_r: f32 = mask_r.iter().sum::<f32>() / mask_r.len() as f32;
-        mask_sum += ((avg_l + avg_r) * 0.5) as f64;
-        let min_l = *mask_l.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&1.0);
-        let min_r = *mask_r.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&1.0);
-        mask_min = mask_min.min(min_l).min(min_r);
-        frame_count += 1;
-
-        // IFFT + overlap-add per channel
-        music_fft_l.synthesize(&masked_spectrum_l, &mut masked_music_accum_l, pos);
-        music_fft_r.synthesize(&masked_spectrum_r, &mut masked_music_accum_r, pos);
-        voice_fft_l.synthesize(&voice_spectrum_l, &mut voice_accum_l, pos);
-        voice_fft_r.synthesize(&voice_spectrum_r, &mut voice_accum_r, pos);
-
+        pipeline.process_frame(
+            &music_l[pos..pos + fft_size],
+            &music_r[pos..pos + fft_size],
+            &voice_l[pos..pos + fft_size],
+            &voice_r[pos..pos + fft_size],
+            &config.masking,
+            &mut masked_music_accum_l,
+            &mut masked_music_accum_r,
+            &mut voice_accum_l,
+            &mut voice_accum_r,
+            pos,
+        );
         pos += hop_size;
     }
 
@@ -283,14 +299,14 @@ fn process_offline(
     write_wav_stereo(output_path, &output_l, &output_r, sample_rate)?;
 
     // Print stats
-    let avg_mask = if frame_count > 0 {
-        mask_sum / frame_count as f64
+    let avg_mask = if pipeline.frame_count > 0 {
+        pipeline.mask_sum / pipeline.frame_count as f64
     } else {
         1.0
     };
-    eprintln!("  Frames processed: {frame_count}");
+    eprintln!("  Frames processed: {}", pipeline.frame_count);
     eprintln!("  Average mask value: {avg_mask:.4}");
-    eprintln!("  Min mask value: {mask_min:.4} ({:.1} dB)", 20.0 * mask_min.max(1e-10).log10());
+    eprintln!("  Min mask value: {:.4} ({:.1} dB)", pipeline.mask_min, 20.0 * pipeline.mask_min.max(1e-10).log10());
     eprintln!("  Output written to: {}", output_path.display());
 
     Ok(())
